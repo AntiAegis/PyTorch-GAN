@@ -97,13 +97,20 @@ class VAE(nn.Module):
 
 
 #------------------------------------------------------------------------------
+#   Loss function
+#------------------------------------------------------------------------------
+def loss_fn(recon_x, x, mu, logvar):
+    BCE = F.mse_loss(recon_x, x)
+    KLD = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
+    return BCE + KLD
+
+
+#------------------------------------------------------------------------------
 #  Setup
 #------------------------------------------------------------------------------
-# Loss function
-recons_loss = nn.MSELoss()
-
 # Initialize VAE
 model = VAE(in_dims=784, hid_dims=100)
+model.cuda()
 
 # Configure data loader
 data_dir = "/media/antiaegis/storing/datasets/MNIST/"
@@ -126,10 +133,6 @@ if os.path.exists(LOG_DIR):
 	rmtree(LOG_DIR)
 writer = SummaryWriter(log_dir=LOG_DIR)
 
-# Send to cuda
-model.cuda()
-recons_loss.cuda()
-
 
 #------------------------------------------------------------------------------
 #  Training
@@ -144,7 +147,7 @@ for epoch in range(1, NUM_EPOCH+1):
 		# Train
 		optimizer.zero_grad()
 		outputs, mu, logvar = model(inputs)
-		loss = recons_loss(inputs, outputs)
+		loss = loss_fn(outputs, inputs, mu, logvar)
 		loss.backward()
 		optimizer.step()
 
