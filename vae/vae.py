@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader
 from torchvision import datasets
 from torchvision.utils import make_grid
 import torchvision.transforms as transforms
-from tensorboardX import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
 
 
 #------------------------------------------------------------------------------
@@ -36,7 +36,35 @@ LOG_DIR = "./logging"
 
 
 #------------------------------------------------------------------------------
-#  Class of VAE
+#   ImproveChecker
+#------------------------------------------------------------------------------
+class ImproveChecker():
+	def __init__(self, mode='min', best_val=np.inf):
+		assert mode in ['min', 'max']
+		self.mode = mode
+		self.best_val = best_val
+
+	def check(self, val):
+		if self.mode=='min':
+			if val < self.best_val:
+				print("[%s] Improved from %.4f to %.4f" % (self.__class__.__name__, val, self.best_val))
+				self.best_val = val
+				return True
+			else:
+				print("[%s] Not improved from %.4f to %.4f" % (self.__class__.__name__, val, self.best_val))
+				return True
+		else:
+			if val > self.best_val:
+				print("[%s] Improved from %.4f to %.4f" % (self.__class__.__name__, val, self.best_val))
+				self.best_val = val
+				return True
+			else:
+				print("[%s] Not improved from %.4f to %.4f" % (self.__class__.__name__, val, self.best_val))
+				return True
+
+
+#------------------------------------------------------------------------------
+#  VAE
 #------------------------------------------------------------------------------
 class VAE(nn.Module):
 	def __init__(self, in_dims=784, hid_dims=100, negative_slope=0.1):
@@ -113,12 +141,13 @@ model = VAE(in_dims=784, hid_dims=100)
 model.cuda()
 
 # Configure data loader
-data_dir = "/media/antiaegis/storing/datasets/MNIST/"
+data_dir = "/home/cybercore/thuync/datasets/"
 os.makedirs(data_dir, exist_ok=True)
 dataset = datasets.MNIST(data_dir, train=True, download=True,
 	transform=transforms.Compose([
 		transforms.ToTensor(),
-		transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+		transforms.Normalize((0.1307,), (0.3081,))
+		# transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
 ]))
 dataloader = torch.utils.data.DataLoader(
 	dataset, batch_size=BATCHS_SIZE,
@@ -131,7 +160,11 @@ optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 # TensorboardX
 if os.path.exists(LOG_DIR):
 	rmtree(LOG_DIR)
+os.makedirs(LOG_DIR, exist_ok=True)
 writer = SummaryWriter(log_dir=LOG_DIR)
+
+# ImproveChecker
+improvechecker = ImproveChecker(mode='min')
 
 
 #------------------------------------------------------------------------------
@@ -152,7 +185,20 @@ for epoch in range(1, NUM_EPOCH+1):
 		optimizer.step()
 
 	# Logging
-	# grid = make_grid(gen_imgs.data[:25], nrow=5, normalize=True)
-	# writer.add_image('output', grid, epoch)
+	outputs = outputs.view(-1, 1, 28, 28)
+	grid = make_grid(outputs.data[:25], nrow=5, normalize=True)
+	writer.add_image('output', grid, epoch)
 	writer.add_scalar("loss", loss.item(), epoch)
 	print("[EPOCH %.3d] Loss: %.6f" % (epoch, loss.item()))
+
+	# ImproveChecker
+	if improvechecker.check(loss.item()):
+		checkpoint = dict(
+			epoch=epoch,
+			loss=loss.item(),
+			state_dict=model.state_dict(),
+			optimizer=optimizer.state_dict(),
+		)
+		save_file = os.path.join(LOG_DIR, "best_checkpoint.pth")
+		torch.save(checkpoint, save_file)
+		print("Best checkpoint is saved at %s" % (save_file))
