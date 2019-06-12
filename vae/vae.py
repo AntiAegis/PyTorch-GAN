@@ -5,17 +5,12 @@ import os
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 import argparse
-import numpy as np
 from shutil import rmtree
-from collections import OrderedDict
 
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
-
 from torchvision import datasets
 from torchvision.utils import make_grid
+from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 from torch.utils.tensorboard import SummaryWriter
 
@@ -23,114 +18,24 @@ from torch.utils.tensorboard import SummaryWriter
 #------------------------------------------------------------------------------
 #  Arguments
 #------------------------------------------------------------------------------
-# Data
-NUM_EPOCH = 500
-BATCHS_SIZE = 128
-NUM_CPUS = 8
+parser = argparse.ArgumentParser()
 
-# Optimizer
-LR = 1e-3
+parser.add_argument('--n_epochs', type=int, default=200,
+					help='number of epochs of training')
 
-# Logging
-LOG_DIR = "./logging"
+parser.add_argument('--batch_size', type=int, default=128,
+					help='size of the batches')
 
+parser.add_argument('--lr', type=float, default=1e-3,
+					help='adam: learning rate')
 
-#------------------------------------------------------------------------------
-#   ImproveChecker
-#------------------------------------------------------------------------------
-class ImproveChecker():
-	def __init__(self, mode='min', best_val=np.inf):
-		assert mode in ['min', 'max']
-		self.mode = mode
-		self.best_val = best_val
+parser.add_argument('--n_cpus', type=int, default=8,
+					help='number of cpu threads to use during batch generation')
 
-	def check(self, val):
-		if self.mode=='min':
-			if val < self.best_val:
-				print("[%s] Improved from %.4f to %.4f" % (self.__class__.__name__, val, self.best_val))
-				self.best_val = val
-				return True
-			else:
-				print("[%s] Not improved from %.4f to %.4f" % (self.__class__.__name__, val, self.best_val))
-				return True
-		else:
-			if val > self.best_val:
-				print("[%s] Improved from %.4f to %.4f" % (self.__class__.__name__, val, self.best_val))
-				self.best_val = val
-				return True
-			else:
-				print("[%s] Not improved from %.4f to %.4f" % (self.__class__.__name__, val, self.best_val))
-				return True
+parser.add_argument('--log_dir', type=str, default="./logging",
+					help='use cuda to train model')
 
-
-#------------------------------------------------------------------------------
-#  VAE
-#------------------------------------------------------------------------------
-class VAE(nn.Module):
-	def __init__(self, in_dims=784, hid_dims=100, negative_slope=0.1):
-		super(VAE, self).__init__()
-
-		self.encoder = nn.Sequential(OrderedDict([
-			('layer1', nn.Linear(in_dims, 512)),
-			('relu1', nn.LeakyReLU(negative_slope=negative_slope, inplace=True)),
-			('layer2', nn.Linear(512, 256)),
-			('relu2', nn.LeakyReLU(negative_slope=negative_slope, inplace=True)),
-			('layer3', nn.Linear(256, 128)),
-			('relu3', nn.LeakyReLU(negative_slope=negative_slope, inplace=True)),
-		]))
-
-		self.fc_mu = nn.Linear(128, hid_dims)
-		self.fc_var = nn.Linear(128, hid_dims)
-
-		self.decoder = nn.Sequential(OrderedDict([
-			('layer1', nn.Linear(hid_dims, 128)),
-			('relu1', nn.LeakyReLU(negative_slope=negative_slope, inplace=True)),
-			('layer2', nn.Linear(128, 256)),
-			('relu2', nn.LeakyReLU(negative_slope=negative_slope, inplace=True)),
-			('layer3', nn.Linear(256, 512)),
-			('relu3', nn.LeakyReLU(negative_slope=negative_slope, inplace=True)),
-			('layer4', nn.Linear(512, in_dims)),
-			('sigmoid', nn.Sigmoid()),
-		]))
-
-		self._init_weights()
-
-	def forward(self, x):
-		h = self.encoder(x)
-		mu, logvar = self.fc_mu(h), self.fc_var(h)
-		z = self.reparameterize(mu, logvar)
-		y = self.decoder(z)
-		return y, mu, logvar
-
-	def representation(self, x):
-		h = self.encoder(x)
-		mu, logvar = self.fc_mu(h), self.fc_var(h)
-		z = self.reparameterize(mu, logvar)
-		return z
-
-	def reparameterize(self, mu, logvar):
-		std = logvar.mul(0.5).exp_()
-		esp = torch.randn(*mu.size()).cuda()
-		z = mu + std * esp
-		return z
-
-	def _init_weights(self):
-		for m in self.modules():
-			if isinstance(m, nn.Linear):
-				m.weight.data.normal_(0, 0.01)
-				m.bias.data.zero_()
-			elif isinstance(m, nn.BatchNorm2d):
-				m.weight.data.fill_(1)
-				m.bias.data.zero_()
-
-
-#------------------------------------------------------------------------------
-#   Loss function
-#------------------------------------------------------------------------------
-def loss_fn(recon_x, x, mu, logvar):
-    BCE = F.mse_loss(recon_x, x)
-    KLD = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
-    return BCE + KLD
+args = parser.parse_args()
 
 
 #------------------------------------------------------------------------------
@@ -146,22 +51,21 @@ os.makedirs(data_dir, exist_ok=True)
 dataset = datasets.MNIST(data_dir, train=True, download=True,
 	transform=transforms.Compose([
 		transforms.ToTensor(),
-		transforms.Normalize((0.1307,), (0.3081,))
-		# transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+		transforms.Normalize((0.5,), (0.5,))
 ]))
 dataloader = torch.utils.data.DataLoader(
-	dataset, batch_size=BATCHS_SIZE,
-	num_workers=NUM_CPUS, shuffle=True, pin_memory=True,
+	dataset, batch_size=args.batch_size,
+	num_workers=args.n_cpus, shuffle=True, pin_memory=True,
 )
 
 # Optimizers
-optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
 # TensorboardX
-if os.path.exists(LOG_DIR):
-	rmtree(LOG_DIR)
-os.makedirs(LOG_DIR, exist_ok=True)
-writer = SummaryWriter(log_dir=LOG_DIR)
+if os.path.exists(args.log_dir):
+	rmtree(args.log_dir)
+os.makedirs(args.log_dir, exist_ok=True)
+writer = SummaryWriter(log_dir=args.log_dir)
 
 # ImproveChecker
 improvechecker = ImproveChecker(mode='min')
@@ -171,7 +75,7 @@ improvechecker = ImproveChecker(mode='min')
 #  Training
 #------------------------------------------------------------------------------
 model.train()
-for epoch in range(1, NUM_EPOCH+1):
+for epoch in range(1, args.n_epochs+1):
 	for i, (imgs, _) in enumerate(dataloader):
 		# Prepare input
 		inputs = imgs.view(imgs.shape[0], -1)
