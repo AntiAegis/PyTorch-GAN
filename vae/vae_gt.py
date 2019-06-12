@@ -26,7 +26,7 @@ parser.add_argument('--n_epochs', type=int, default=200,
 parser.add_argument('--batch_size', type=int, default=128,
 					help='size of the batches')
 
-parser.add_argument('--lr', type=float, default=1e-3,
+parser.add_argument('--lr', type=float, default=5e-4,
 					help='adam: learning rate')
 
 parser.add_argument('--n_cpus', type=int, default=8,
@@ -42,7 +42,7 @@ args = parser.parse_args()
 #  Setup
 #------------------------------------------------------------------------------
 # Initialize VAE
-model = VAE(in_dims=784, hid_dims=100)
+model = VAEGT(in_dims=784, hid_dims=100, num_classes=10)
 model.cuda()
 
 # Configure data loader
@@ -76,14 +76,14 @@ improvechecker = ImproveChecker(mode='min')
 #------------------------------------------------------------------------------
 model.train()
 for epoch in range(1, args.n_epochs+1):
-	for i, (imgs, _) in enumerate(dataloader):
+	for i, (imgs, gts) in enumerate(dataloader):
 		# Prepare input
-		inputs = imgs.view(imgs.shape[0], -1)
-		inputs = inputs.cuda()
+		inputs = imgs.view(imgs.shape[0], -1).cuda()
+        gts = gts.view(-1, 1).cuda()
 
 		# Train
 		optimizer.zero_grad()
-		outputs, mu, logvar = model(inputs)
+		outputs, mu, logvar = model(inputs, gts)
 		loss = loss_fn(outputs, inputs, mu, logvar)
 		loss.backward()
 		optimizer.step()
